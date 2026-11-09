@@ -1,9 +1,22 @@
 /**
  * @name Meowssion
  * @author Miau
- * @version 1.0.0
+ * @version 1.1.0
  * @description Criado Por Miau
+ * @license GPL-3.0
  * @source https://github.com/lMiauuu/Meowssion
+ */
+
+/*
+ * Copyright (C) 2026 Miau (lMiauuu)
+ *
+ * Meowssion - Discord Quests Automation & Management Plugin for BetterDiscord.
+ * Architecture, UI/UX, visual themes, internationalization (i18n), and auto-enrollment
+ * designed and implemented by Miau (lMiauuu).
+ *
+ * Internal Discord Store spoofing logic & simulation mechanisms reference:
+ * - @aamiaa (Gist: 204cd9d42013ded9faf646fae7f89fbb)
+ * Licensed under the GNU General Public License v3.0 (GPL-3.0).
  */
 
 
@@ -11,6 +24,7 @@ module.exports = class Meowssion {
     constructor() {
         this.pluginName = "Meowssion";
         this.activeModal = null;
+        this.activeTab = "quests";
         this.questsSubTab = "pending";
         this.questsSelectedIds = new Set();
         this.isQuestsRunning = false;
@@ -18,6 +32,7 @@ module.exports = class Meowssion {
         this.runningQuestId = null;
         this.autoQuestsTimer = null;
         this.searchFilter = "";
+        this.shopQuantity = 1;
         this._headerObserver = null;
         this._channelChangeListener = null;
         this._questsHeartbeatListener = null;
@@ -27,7 +42,8 @@ module.exports = class Meowssion {
             theme: "midnight",
             language: "en",
             autoQuests: false,
-            autoQuestsInterval: 10 * 60 * 1000
+            autoQuestsInterval: 10 * 60 * 1000,
+            customOrbBalance: null
         };
         this.settings = Object.assign({}, this.defaultSettings);
     }
@@ -196,7 +212,6 @@ module.exports = class Meowssion {
                     <path d="M9 12h.01"></path>
                     <path d="M15 12h.01"></path>
                     <path d="M11.5 14.5h1"></path>
-                    <polygon points="12 6 13.09 8.26 15.5 8.61 13.75 10.31 14.16 12.7 12 11.56 9.84 12.7 10.25 10.31 8.5 8.61 10.91 8.26 12 6" fill="#5865f2" stroke="#5865f2" stroke-width="0.8"></polygon>
                 </svg>
             `;
 
@@ -325,8 +340,15 @@ module.exports = class Meowssion {
                 </div>
 
                 <div class="msg-tabs-bar">
-                    <button class="msg-tab-btn active" data-tab="quests">
+                    <button class="msg-tab-btn ${this.activeTab === 'quests' ? 'active' : ''}" data-tab="quests">
                         ${this.t("tabs.quests")} <span class="msg-tab-count">${this.getActiveQuestsCount()}</span>
+                    </button>
+                    <button class="msg-tab-btn ${this.activeTab === 'shop' ? 'active' : ''}" data-tab="shop">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: -2px;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 6v12M8 10l4-4 4 4"></path>
+                        </svg>
+                        ${this.t("tabs.orbs_shop")}
                     </button>
                 </div>
 
@@ -346,11 +368,25 @@ module.exports = class Meowssion {
         const refreshTopBtn = backdrop.querySelector("#meowssion-btn-refresh-top");
         const closeBtn = backdrop.querySelector("#meowssion-btn-close");
 
-        this.renderQuestsTab(content);
+        const tabBtns = backdrop.querySelectorAll(".msg-tabs-bar .msg-tab-btn");
+        tabBtns.forEach(btn => {
+            btn.addEventListener("click", () => {
+                const tab = btn.getAttribute("data-tab");
+                if (tab && tab !== this.activeTab) {
+                    this.activeTab = tab;
+                    tabBtns.forEach(b => b.classList.toggle("active", b.getAttribute("data-tab") === this.activeTab));
+                    this.renderCurrentTab(content);
+                }
+            });
+        });
+
+        this.renderCurrentTab(content);
 
         searchInput?.addEventListener("input", (e) => {
             this.searchFilter = e.target.value.trim();
-            this.renderQuestsTab(content);
+            if (this.activeTab === "quests") {
+                this.renderQuestsTab(content);
+            }
             const searchBox = searchInput.parentElement;
             let clearBtn = searchBox.querySelector("#meowssion-clear-search");
             if (this.searchFilter) {
@@ -364,7 +400,9 @@ module.exports = class Meowssion {
                         searchInput.value = "";
                         this.searchFilter = "";
                         clearBtn.remove();
-                        this.renderQuestsTab(content);
+                        if (this.activeTab === "quests") {
+                            this.renderQuestsTab(content);
+                        }
                     });
                     searchBox.appendChild(clearBtn);
                 }
@@ -377,7 +415,9 @@ module.exports = class Meowssion {
             if (searchInput) searchInput.value = "";
             this.searchFilter = "";
             clearSearch.remove();
-            this.renderQuestsTab(content);
+            if (this.activeTab === "quests") {
+                this.renderQuestsTab(content);
+            }
         });
 
         langBtn?.addEventListener("click", () => {
@@ -400,7 +440,7 @@ module.exports = class Meowssion {
 
         refreshTopBtn?.addEventListener("click", () => {
             this.initStores();
-            this.renderQuestsTab(content);
+            this.renderCurrentTab(content);
             this.updateTabCounters();
             this.notify(this.t("quests.toast_refreshed"), "info");
         });
@@ -437,9 +477,18 @@ module.exports = class Meowssion {
 
     updateTabCounters() {
         if (!this.activeModal) return;
-        const countEl = this.activeModal.querySelector(".msg-tabs-bar .msg-tab-count");
+        const countEl = this.activeModal.querySelector('.msg-tabs-bar .msg-tab-btn[data-tab="quests"] .msg-tab-count');
         if (countEl) {
             countEl.innerText = this.getActiveQuestsCount();
+        }
+    }
+
+    renderCurrentTab(container) {
+        if (!container) return;
+        if (this.activeTab === "shop") {
+            this.renderShopTab(container);
+        } else {
+            this.renderQuestsTab(container);
         }
     }
 
@@ -723,11 +772,12 @@ module.exports = class Meowssion {
 
     startAutoQuestsTimer() {
         this.stopAutoQuestsTimer();
+        const interval = this.settings.autoQuestsInterval || (10 * 60 * 1000);
         this.autoQuestsTimer = setInterval(() => {
             if (this.settings.autoQuests) {
                 this.checkAndRunAutoQuests(false);
             }
-        }, 10 * 60 * 1000);
+        }, interval);
     }
 
     stopAutoQuestsTimer() {
@@ -761,27 +811,108 @@ module.exports = class Meowssion {
         }
     }
 
-    openDiscordQuestsPage() {
+    openDiscordPage(path = "/quest-home") {
         try {
-            const questLink = document.querySelector('a[href="/quest-home"]');
-            if (questLink) {
-                questLink.click();
+            const link = document.querySelector(`a[href="${path}"]`) || document.querySelector(`a[href*="${path}"]`);
+            if (link) {
+                link.click();
                 return;
             }
-            const Router = BdApi.Webpack.getModule(m => m?.transitionTo && m?.replaceWith && m?.getHistory, { searchExports: true });
+            const Router = BdApi.Webpack.getModule(m => m?.transitionTo && m?.replaceWith && m?.getHistory, { searchExports: true }) ||
+                BdApi.Webpack.getModule(m => m?.transitionTo, { searchExports: true });
             if (Router?.transitionTo) {
-                Router.transitionTo("/quest-home");
+                Router.transitionTo(path);
                 return;
             }
-            window.history.pushState({}, "", "/quest-home");
+            const HistoryModule = BdApi.Webpack.getModule(m => m?.getHistory || m?.history?.push, { searchExports: true });
+            const history = HistoryModule?.getHistory?.() || HistoryModule?.history;
+            if (history?.push) {
+                history.push(path);
+                return;
+            }
+            window.history.pushState({}, "", path);
             window.dispatchEvent(new PopStateEvent("popstate"));
+        } catch (e) {
+            console.error(`[Meowssion] Falha ao navegar para ${path}:`, e);
+        }
+    }
+
+    openDiscordQuestsPage() {
+        this.openDiscordPage("/quest-home");
+    }
+
+    getQuestsOrbSummary() {
+        const all = this.getAllQuests();
+        let earnedOrbs = 0;
+        let pendingOrbs = 0;
+
+        for (const q of all) {
+            if (!q || !q.config) continue;
+            const rewards = this.getQuestRewards(q);
+            let questOrbs = 0;
+            for (const r of rewards) {
+                if (typeof r?.orbQuantity === "number" && r.orbQuantity > 0) {
+                    questOrbs += r.orbQuantity;
+                }
+            }
+            if (questOrbs === 0) continue;
+
+            const st = this.getQuestStatus(q);
+            if (st.isCompleted) {
+                earnedOrbs += questOrbs;
+            } else {
+                const exp = new Date(q.config.expiresAt).getTime();
+                if (!Number.isFinite(exp) || exp > Date.now()) {
+                    pendingOrbs += questOrbs;
+                }
+            }
+        }
+
+        let storeOrbs = null;
+        try {
+            const vcStore = BdApi.Webpack.getStore("VirtualCurrencyStore") ||
+                BdApi.Webpack.getStore("OrbsStore") ||
+                BdApi.Webpack.getStore("UserVirtualCurrencyStore") ||
+                BdApi.Webpack.getStore("UserProfileStore") ||
+                BdApi.Webpack.getStore("EntitlementStore");
+
+            if (vcStore) {
+                if (typeof vcStore.getOrbBalance === "function") storeOrbs = vcStore.getOrbBalance();
+                else if (typeof vcStore.getBalance === "function") storeOrbs = vcStore.getBalance();
+                else if (typeof vcStore.getOrbs === "function") storeOrbs = vcStore.getOrbs();
+                else if (typeof vcStore.getVirtualCurrencyBalance === "function") storeOrbs = vcStore.getVirtualCurrencyBalance();
+            }
+            if (storeOrbs == null) {
+                const orbMod = BdApi.Webpack.getModule(m => m?.getOrbBalance || m?.getOrbs || m?.getUserOrbBalance || m?.getVirtualCurrencyBalance, { searchExports: true });
+                if (orbMod?.getOrbBalance) storeOrbs = orbMod.getOrbBalance();
+                else if (orbMod?.getOrbs) storeOrbs = orbMod.getOrbs();
+                else if (orbMod?.getUserOrbBalance) storeOrbs = orbMod.getUserOrbBalance();
+                else if (orbMod?.getVirtualCurrencyBalance) storeOrbs = orbMod.getVirtualCurrencyBalance();
+            }
         } catch (e) { }
+
+        const isCustom = typeof this.settings.customOrbBalance === "number" && !isNaN(this.settings.customOrbBalance);
+        let currentBalance = earnedOrbs;
+        if (isCustom) {
+            currentBalance = Math.max(0, this.settings.customOrbBalance);
+        } else if (typeof storeOrbs === "number" && !isNaN(storeOrbs) && storeOrbs >= 0) {
+            currentBalance = storeOrbs;
+        }
+
+        return {
+            earnedOrbs,
+            pendingOrbs,
+            currentBalance,
+            storeOrbs,
+            isCustom
+        };
     }
 
     renderQuestsTab(container) {
         if (!container) return;
         if (!this.questsSubTab) this.questsSubTab = "pending";
 
+        const orbSummary = this.getQuestsOrbSummary();
         const allQuests = this.getAvailableQuests();
         const pendingCount = allQuests.filter(q => !this.getQuestStatus(q).isCompleted).length;
         const completedCount = allQuests.filter(q => this.getQuestStatus(q).isCompleted).length;
@@ -943,6 +1074,18 @@ module.exports = class Meowssion {
                     <div class="mp-quests-toolbar-left">
                         <span class="mp-quests-toolbar-title">${this.t("quests.title")}</span>
                         <span class="mp-quests-count-tag">${this.t("quests.pending_count", { count: pendingCount })}</span>
+                        <div class="mp-quests-orb-badges">
+                            <span class="mp-orb-badge mp-orb-badge-earned" title="${this.t('orbs.earned_tooltip')}">
+                                <span class="mp-orb-sparkle">✦</span>
+                                <span class="mp-orb-val">${orbSummary.earnedOrbs.toLocaleString()}</span>
+                                <span class="mp-orb-lbl">${this.t("orbs.earned_label")}</span>
+                            </span>
+                            <span class="mp-orb-badge mp-orb-badge-pending" title="${this.t('orbs.pending_tooltip')}">
+                                <span class="mp-orb-sparkle">✦</span>
+                                <span class="mp-orb-val">+${orbSummary.pendingOrbs.toLocaleString()}</span>
+                                <span class="mp-orb-lbl">${this.t("orbs.pending_label")}</span>
+                            </span>
+                        </div>
                     </div>
                     <div class="mp-quests-toolbar-right">
                         ${actionsHtml}
@@ -1052,6 +1195,273 @@ module.exports = class Meowssion {
         });
     }
 
+    renderShopTab(container) {
+        if (!container) return;
+
+        const orbSummary = this.getQuestsOrbSummary();
+        const currentOrbs = orbSummary.currentBalance;
+        const pendingOrbs = orbSummary.pendingOrbs;
+        const earnedOrbs = orbSummary.earnedOrbs;
+
+        const maxAffordable = Math.floor(currentOrbs / 1400);
+
+        if (!this.shopQuantity || this.shopQuantity < 1) {
+            this.shopQuantity = 1;
+        }
+        const qty = this.shopQuantity;
+        const totalCost = qty * 1400;
+        const totalDays = qty * 3;
+        const remainingOrbs = currentOrbs - totalCost;
+        const hasEnoughForOne = currentOrbs >= 1400;
+        const hasEnoughForQty = remainingOrbs >= 0;
+        const missingForOne = Math.max(0, 1400 - currentOrbs);
+        const missingForQty = Math.max(0, totalCost - currentOrbs);
+
+        const pendingQuestsWithOrbs = this.getAvailableQuests().filter(q => {
+            const st = this.getQuestStatus(q);
+            if (st.isCompleted) return false;
+            const rewards = this.getQuestRewards(q);
+            return rewards.some(r => typeof r?.orbQuantity === "number" && r.orbQuantity > 0);
+        });
+
+        let balanceSourceNote = "";
+        if (orbSummary.isCustom) {
+            balanceSourceNote = `<span class="mp-shop-sync-pill mp-sync-manual" title="${this.t('shop.balance_manual_tooltip')}">${this.t('shop.balance_manual_tag')}</span>`;
+        } else if (orbSummary.storeOrbs != null) {
+            balanceSourceNote = `<span class="mp-shop-sync-pill mp-sync-live" title="${this.t('shop.balance_live_tooltip')}">${this.t('shop.balance_live_tag')}</span>`;
+        } else {
+            balanceSourceNote = `<span class="mp-shop-sync-pill mp-sync-auto" title="${this.t('shop.balance_calc_tooltip')}">${this.t('shop.balance_calc_tag')}</span>`;
+        }
+
+        let deficitHtml = "";
+        if (!hasEnoughForQty) {
+            const missingCount = (!hasEnoughForOne && qty === 1) ? missingForOne : missingForQty;
+            deficitHtml = `
+                <div class="mp-shop-warning-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; color: #f0b232;">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <div class="mp-shop-warning-text">
+                        ${this.t("shop.missing_orbs_help", {
+                            missing: missingCount.toLocaleString(),
+                            pending: pendingOrbs.toLocaleString(),
+                            count: pendingQuestsWithOrbs.length
+                        })}
+                    </div>
+                </div>
+            `;
+        }
+
+        container.innerHTML = `
+            <div class="mp-shop-container">
+                <div class="mp-shop-header-card">
+                    <div class="mp-shop-header-info">
+                        <h2 class="mp-shop-title">
+                            <span class="mp-shop-title-sparkle">✦</span>
+                            ${this.t("shop.title")}
+                        </h2>
+                        <p class="mp-shop-subtitle">${this.t("shop.subtitle")}</p>
+                    </div>
+                    <div class="mp-shop-stats-grid">
+                        <div class="mp-shop-stat-box">
+                            <div class="mp-shop-stat-label">
+                                <span>${this.t("shop.stat_current_balance")}</span>
+                                ${balanceSourceNote}
+                            </div>
+                            <div class="mp-shop-stat-value mp-val-highlight">✦ ${currentOrbs.toLocaleString()}</div>
+                        </div>
+                        <div class="mp-shop-stat-box">
+                            <div class="mp-shop-stat-label">${this.t("shop.stat_earned_total")}</div>
+                            <div class="mp-shop-stat-value">✦ ${earnedOrbs.toLocaleString()}</div>
+                        </div>
+                        <div class="mp-shop-stat-box">
+                            <div class="mp-shop-stat-label">${this.t("shop.stat_pending_total")}</div>
+                            <div class="mp-shop-stat-value mp-val-green">✦ +${pendingOrbs.toLocaleString()}</div>
+                        </div>
+                        <div class="mp-shop-stat-box">
+                            <div class="mp-shop-stat-label">${this.t("shop.stat_max_redeemable")}</div>
+                            <div class="mp-shop-stat-value">${maxAffordable}x <span class="mp-stat-sub">(${maxAffordable * 3}d)</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mp-shop-card">
+                    <div class="mp-shop-card-badge-row">
+                        <span class="mp-shop-exclusive-tag">${this.t("shop.exclusive_tag")}</span>
+                        <span class="mp-shop-cost-tag">✦ 1.400 Orbs = 3 ${this.t("shop.days")} Nitro</span>
+                    </div>
+
+                    <div class="mp-shop-item-row">
+                        <div class="mp-shop-nitro-icon-wrap">
+                            <svg class="mp-shop-nitro-svg" width="42" height="42" viewBox="0 0 24 24" fill="none">
+                                <defs>
+                                    <linearGradient id="nitro-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                        <stop offset="0%" stop-color="#f47fff" />
+                                        <stop offset="50%" stop-color="#5865f2" />
+                                        <stop offset="100%" stop-color="#00ffff" />
+                                    </linearGradient>
+                                </defs>
+                                <path d="M12 2L3 9l9 13 9-13-9-7z" fill="url(#nitro-grad)" stroke="#ffffff" stroke-width="1.2" stroke-linejoin="round" />
+                                <path d="M12 22V9" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" />
+                                <path d="M3 9h18" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" />
+                                <path d="M7.5 5.5l4.5 3.5 4.5-3.5" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" />
+                            </svg>
+                        </div>
+
+                        <div class="mp-shop-item-details">
+                            <h3 class="mp-shop-item-title">${this.t("shop.nitro_card_title")}</h3>
+                            <p class="mp-shop-item-desc">${this.t("shop.nitro_card_desc")}</p>
+                        </div>
+                    </div>
+
+                    <div class="mp-shop-simulator-wrap">
+                        <div class="mp-shop-simulator-top">
+                            <span class="mp-shop-sim-label">${this.t("shop.qty_selector_label")}</span>
+                            <div class="mp-shop-qty-control">
+                                <button class="mp-qty-btn mp-qty-minus" id="mp-shop-qty-dec" ${qty <= 1 ? 'disabled' : ''}>-</button>
+                                <input type="number" id="mp-shop-qty-input" class="mp-qty-input" min="1" max="999" value="${qty}" />
+                                <button class="mp-qty-btn mp-qty-plus" id="mp-shop-qty-inc">+</button>
+                                <button class="mp-qty-btn mp-qty-max" id="mp-shop-qty-max" title="${this.t('shop.max_tooltip')}">MAX (${Math.max(1, maxAffordable)}x)</button>
+                            </div>
+                        </div>
+
+                        <div class="mp-shop-calc-grid">
+                            <div class="mp-shop-calc-item">
+                                <span class="mp-calc-label">${this.t("shop.calc_selected")}</span>
+                                <span class="mp-calc-val"><strong>${qty}x</strong> ( ${this.t("shop.nitro_days_added", { days: totalDays })} )</span>
+                            </div>
+                            <div class="mp-shop-calc-item">
+                                <span class="mp-calc-label">${this.t("shop.total_cost")}</span>
+                                <span class="mp-calc-val mp-cost-val">✦ ${totalCost.toLocaleString()} Orbs</span>
+                            </div>
+                            <div class="mp-shop-calc-item">
+                                <span class="mp-calc-label">${this.t("shop.remaining_orbs")}</span>
+                                <span class="mp-calc-val ${hasEnoughForQty ? 'mp-val-green' : 'mp-val-danger'}">
+                                    ✦ ${remainingOrbs.toLocaleString()} Orbs
+                                    ${!hasEnoughForQty ? `<small style="font-size:11px; margin-left: 4px;">(${this.t("shop.insufficient_label")})</small>` : ''}
+                                </span>
+                            </div>
+                        </div>
+
+                        ${deficitHtml}
+                    </div>
+
+                    <div class="mp-shop-actions-wrap">
+                        <button class="mp-btn mp-btn-primary mp-shop-btn-redeem" id="mp-shop-btn-open-discord">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                            ${this.t("shop.btn_open_discord_shop", { qty })}
+                        </button>
+                        <div class="mp-shop-security-notice">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#57f287" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                            <span>${this.t("shop.security_notice")}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mp-shop-sync-card">
+                    <div class="mp-shop-sync-header">
+                        <div>
+                            <h4 class="mp-shop-sync-title">${this.t("shop.sync_balance_title")}</h4>
+                            <p class="mp-shop-sync-desc">${this.t("shop.sync_balance_desc")}</p>
+                        </div>
+                    </div>
+
+                    <div class="mp-shop-sync-controls">
+                        <div class="mp-shop-sync-input-group">
+                            <span class="mp-sync-input-prefix">✦</span>
+                            <input type="number" id="mp-shop-sync-input" class="mp-sync-input" value="${currentOrbs}" placeholder="${this.t('shop.sync_balance_placeholder')}" min="0" />
+                            <button class="mp-btn mp-btn-secondary" id="mp-shop-btn-save-sync">${this.t("shop.btn_save_balance")}</button>
+                            <button class="mp-btn mp-btn-secondary" id="mp-shop-btn-reset-sync" title="${this.t('shop.btn_reset_balance_tooltip')}">${this.t("shop.btn_reset_balance")}</button>
+                        </div>
+
+                        <button class="mp-btn mp-btn-secondary mp-shop-btn-deduct" id="mp-shop-btn-deduct-ledger">
+                            ${this.t("shop.btn_register_redeem", { cost: totalCost.toLocaleString() })}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        this.bindShopEvents(container);
+    }
+
+    bindShopEvents(root) {
+        if (!root) return;
+
+        const inputQty = root.querySelector("#mp-shop-qty-input");
+        const btnDec = root.querySelector("#mp-shop-qty-dec");
+        const btnInc = root.querySelector("#mp-shop-qty-inc");
+        const btnMax = root.querySelector("#mp-shop-qty-max");
+
+        const updateQty = (newVal) => {
+            let v = parseInt(newVal, 10);
+            if (isNaN(v) || v < 1) v = 1;
+            if (v > 999) v = 999;
+            this.shopQuantity = v;
+            this.renderShopTab(root);
+        };
+
+        inputQty?.addEventListener("change", (e) => updateQty(e.target.value));
+        btnDec?.addEventListener("click", () => updateQty((this.shopQuantity || 1) - 1));
+        btnInc?.addEventListener("click", () => updateQty((this.shopQuantity || 1) + 1));
+        btnMax?.addEventListener("click", () => {
+            const orbSummary = this.getQuestsOrbSummary();
+            const maxAffordable = Math.floor(orbSummary.currentBalance / 1400);
+            updateQty(Math.max(1, maxAffordable));
+        });
+
+        root.querySelector("#mp-shop-btn-open-discord")?.addEventListener("click", () => {
+            const qty = this.shopQuantity || 1;
+            this.closeModal();
+            this.openDiscordPage("/shop");
+            this.notify(this.t("shop.toast_manual_guide", { qty }), "info", { timeout: 6000 });
+        });
+
+        root.querySelector("#mp-shop-btn-save-sync")?.addEventListener("click", () => {
+            const syncVal = parseInt(root.querySelector("#mp-shop-sync-input")?.value, 10);
+            if (!isNaN(syncVal) && syncVal >= 0) {
+                this.settings.customOrbBalance = syncVal;
+                this.saveSettings();
+                this.notify(this.t("shop.toast_balance_saved", { balance: syncVal }), "success");
+                this.renderShopTab(root);
+            }
+        });
+
+        root.querySelector("#mp-shop-btn-reset-sync")?.addEventListener("click", () => {
+            this.settings.customOrbBalance = null;
+            this.saveSettings();
+            const freshSummary = this.getQuestsOrbSummary();
+            this.notify(this.t("shop.toast_balance_reset", { balance: freshSummary.currentBalance }), "info");
+            this.renderShopTab(root);
+        });
+
+        root.querySelector("#mp-shop-btn-deduct-ledger")?.addEventListener("click", () => {
+            const qty = this.shopQuantity || 1;
+            const totalCost = qty * 1400;
+            const orbSummary = this.getQuestsOrbSummary();
+            const cur = orbSummary.currentBalance;
+
+            if (cur < totalCost) {
+                this.notify(this.t("shop.toast_insufficient_orbs"), "warning");
+                return;
+            }
+
+            const newBal = cur - totalCost;
+            this.settings.customOrbBalance = newBal;
+            this.saveSettings();
+            this.notify(this.t("shop.toast_redeem_registered", { qty, cost: totalCost, balance: newBal }), "success");
+            this.renderShopTab(root);
+        });
+    }
+
     async startQuestsExecution() {
         if (this.isQuestsRunning) return;
 
@@ -1076,7 +1486,7 @@ module.exports = class Meowssion {
 
         const container = document.getElementById("meowssion-tab-content");
         if (container) {
-            this.renderQuestsTab(container);
+            this.renderCurrentTab(container);
         }
 
         this.notify(this.t("quests.toast_starting", { count: pending.length }), "info");
@@ -1147,7 +1557,7 @@ module.exports = class Meowssion {
 
                             const curCont = document.getElementById("meowssion-tab-content");
                             if (curCont) {
-                                this.renderQuestsTab(curCont);
+                                this.renderCurrentTab(curCont);
                             }
 
                             this.notify(this.t("quests.toast_completed", { name: questName }), "success");
@@ -1167,7 +1577,7 @@ module.exports = class Meowssion {
 
                 const curContainer = document.getElementById("meowssion-tab-content");
                 if (curContainer) {
-                    this.renderQuestsTab(curContainer);
+                    this.renderCurrentTab(curContainer);
                 }
                 this.notify(this.t("quests.toast_execution_finished"), "info");
             }
@@ -1184,7 +1594,7 @@ module.exports = class Meowssion {
 
         const container = document.getElementById("meowssion-tab-content");
         if (container) {
-            this.renderQuestsTab(container);
+            this.renderCurrentTab(container);
         }
         this.notify(this.t("quests.toast_stopped"), "warning");
     }
@@ -1693,20 +2103,27 @@ module.exports = class Meowssion {
                 width: 28px;
                 height: 28px;
                 margin: 0 4px;
-                color: var(--interactive-normal, #b5bac1);
+                color: #ffffff;
+                opacity: 0.85;
                 border-radius: 4px;
-                transition: color 0.15s, background-color 0.15s;
+                transition: color 0.15s, opacity 0.15s, background-color 0.15s;
             }
             .meowssion-toolbar-btn:hover {
-                color: var(--interactive-hover, #dbdee1);
+                color: #ffffff;
+                opacity: 1.0;
                 background-color: var(--background-modifier-hover, rgba(78, 80, 88, 0.16));
             }
             .meowssion-toolbar-btn.meowssion-working {
                 position: relative;
                 color: #5865f2 !important;
+                opacity: 1.0 !important;
                 background-color: rgba(88, 101, 242, 0.14) !important;
                 border: 1px solid rgba(88, 101, 242, 0.45);
                 box-shadow: 0 0 8px rgba(88, 101, 242, 0.45);
+            }
+            .meowssion-toolbar-btn.meowssion-working .meowssion-toolbar-icon {
+                color: #5865f2 !important;
+                stroke: #5865f2 !important;
             }
             .meowssion-toolbar-btn.meowssion-working::after {
                 content: "";
@@ -1736,54 +2153,54 @@ module.exports = class Meowssion {
             :root,
             [data-theme="midnight"],
             .msg-modal-root[data-theme="midnight"] {
-                --purrge-bg-primary: #0b0c0e;
-                --purrge-bg-secondary: #121417;
-                --purrge-bg-card: #16191e;
-                --purrge-bg-hover: rgba(255, 255, 255, 0.05);
-                --purrge-accent: #6366f1;
-                --purrge-accent-hover: #4f46e5;
-                --purrge-border: rgba(255, 255, 255, 0.07);
-                --purrge-text: #f3f4f6;
-                --purrge-text-muted: #9ca3af;
+                --meowssion-bg-primary: #0b0c0e;
+                --meowssion-bg-secondary: #121417;
+                --meowssion-bg-card: #16191e;
+                --meowssion-bg-hover: rgba(255, 255, 255, 0.05);
+                --meowssion-accent: #6366f1;
+                --meowssion-accent-hover: #4f46e5;
+                --meowssion-border: rgba(255, 255, 255, 0.07);
+                --meowssion-text: #f3f4f6;
+                --meowssion-text-muted: #9ca3af;
             }
 
             [data-theme="discord"],
             .msg-modal-root[data-theme="discord"] {
-                --purrge-bg-primary: #1e1f22;
-                --purrge-bg-secondary: #2b2d31;
-                --purrge-bg-card: #2b2d31;
-                --purrge-bg-hover: rgba(255, 255, 255, 0.06);
-                --purrge-accent: #5865F2;
-                --purrge-accent-hover: #4752c4;
-                --purrge-border: rgba(255, 255, 255, 0.06);
-                --purrge-text: #f2f3f5;
-                --purrge-text-muted: #949ba4;
+                --meowssion-bg-primary: #1e1f22;
+                --meowssion-bg-secondary: #2b2d31;
+                --meowssion-bg-card: #2b2d31;
+                --meowssion-bg-hover: rgba(255, 255, 255, 0.06);
+                --meowssion-accent: #5865F2;
+                --meowssion-accent-hover: #4752c4;
+                --meowssion-border: rgba(255, 255, 255, 0.06);
+                --meowssion-text: #f2f3f5;
+                --meowssion-text-muted: #949ba4;
             }
 
             [data-theme="dark"],
             .msg-modal-root[data-theme="dark"] {
-                --purrge-bg-primary: #141518;
-                --purrge-bg-secondary: #1c1d22;
-                --purrge-bg-card: #212328;
-                --purrge-bg-hover: rgba(255, 255, 255, 0.06);
-                --purrge-accent: #7983f5;
-                --purrge-accent-hover: #5865f2;
-                --purrge-border: rgba(255, 255, 255, 0.08);
-                --purrge-text: #ffffff;
-                --purrge-text-muted: #a3a6aa;
+                --meowssion-bg-primary: #141518;
+                --meowssion-bg-secondary: #1c1d22;
+                --meowssion-bg-card: #212328;
+                --meowssion-bg-hover: rgba(255, 255, 255, 0.06);
+                --meowssion-accent: #7983f5;
+                --meowssion-accent-hover: #5865f2;
+                --meowssion-border: rgba(255, 255, 255, 0.08);
+                --meowssion-text: #ffffff;
+                --meowssion-text-muted: #a3a6aa;
             }
 
             [data-theme="glass"],
             .msg-modal-root[data-theme="glass"] {
-                --purrge-bg-primary: rgba(15, 17, 23, 0.88);
-                --purrge-bg-secondary: rgba(22, 25, 34, 0.85);
-                --purrge-bg-card: rgba(30, 34, 48, 0.75);
-                --purrge-bg-hover: rgba(255, 255, 255, 0.08);
-                --purrge-accent: #6366f1;
-                --purrge-accent-hover: #4f46e5;
-                --purrge-border: rgba(255, 255, 255, 0.12);
-                --purrge-text: #f8fafc;
-                --purrge-text-muted: #94a3b8;
+                --meowssion-bg-primary: rgba(15, 17, 23, 0.88);
+                --meowssion-bg-secondary: rgba(22, 25, 34, 0.85);
+                --meowssion-bg-card: rgba(30, 34, 48, 0.75);
+                --meowssion-bg-hover: rgba(255, 255, 255, 0.08);
+                --meowssion-accent: #6366f1;
+                --meowssion-accent-hover: #4f46e5;
+                --meowssion-border: rgba(255, 255, 255, 0.12);
+                --meowssion-text: #f8fafc;
+                --meowssion-text-muted: #94a3b8;
                 backdrop-filter: blur(16px) saturate(180%);
             }
 
@@ -1802,18 +2219,18 @@ module.exports = class Meowssion {
             }
 
             .msg-modal-root {
-                background-color: var(--purrge-bg-primary, #0b0c0e);
+                background-color: var(--meowssion-bg-primary, #0b0c0e);
                 width: 1040px;
                 height: 750px;
                 max-width: 95vw;
                 max-height: 90vh;
                 border-radius: 12px;
-                border: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.08));
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
                 box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
-                color: var(--purrge-text, #dbdee1);
+                color: var(--meowssion-text, #dbdee1);
                 font-family: var(--font-primary, sans-serif);
                 transition: background-color 0.2s ease, border-color 0.2s ease;
             }
@@ -1823,15 +2240,15 @@ module.exports = class Meowssion {
                 align-items: center;
                 justify-content: space-between;
                 padding: 12px 16px;
-                background-color: var(--purrge-bg-secondary, #121417);
-                border-bottom: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.06));
+                background-color: var(--meowssion-bg-secondary, #121417);
+                border-bottom: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.06));
                 transition: background-color 0.2s ease;
             }
             .msg-search-box {
                 display: flex;
                 align-items: center;
-                background-color: var(--purrge-bg-card, #16191e);
-                border: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.07));
+                background-color: var(--meowssion-bg-card, #16191e);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.07));
                 border-radius: 6px;
                 padding: 6px 10px;
                 width: 380px;
@@ -1843,14 +2260,14 @@ module.exports = class Meowssion {
                 background: transparent;
                 border: none;
                 outline: none;
-                color: var(--purrge-text, #f2f3f5);
+                color: var(--meowssion-text, #f2f3f5);
                 font-size: 13px;
                 width: 100%;
             }
             .msg-clear-search-btn {
                 background: transparent;
                 border: none;
-                color: var(--purrge-text-muted, #949ba4);
+                color: var(--meowssion-text-muted, #949ba4);
                 font-size: 16px;
                 cursor: pointer;
                 line-height: 1;
@@ -1866,7 +2283,7 @@ module.exports = class Meowssion {
             .msg-icon-btn {
                 background: transparent;
                 border: none;
-                color: var(--purrge-text-muted, #949ba4);
+                color: var(--meowssion-text-muted, #949ba4);
                 cursor: pointer;
                 border-radius: 6px;
                 padding: 6px;
@@ -1877,21 +2294,21 @@ module.exports = class Meowssion {
             }
             .msg-icon-btn:hover {
                 color: #f2f3f5;
-                background-color: var(--purrge-bg-hover, rgba(255, 255, 255, 0.08));
+                background-color: var(--meowssion-bg-hover, rgba(255, 255, 255, 0.08));
             }
 
             .msg-tabs-bar {
                 display: flex;
-                background-color: var(--purrge-bg-secondary, #121417);
+                background-color: var(--meowssion-bg-secondary, #121417);
                 padding: 0 16px;
-                border-bottom: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.06));
+                border-bottom: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.06));
                 transition: background-color 0.2s ease;
             }
             .msg-tab-btn {
                 background: transparent;
                 border: none;
                 border-bottom: 2px solid transparent;
-                color: var(--purrge-text-muted, #949ba4);
+                color: var(--meowssion-text-muted, #949ba4);
                 padding: 12px 14px;
                 font-size: 14px;
                 font-weight: 600;
@@ -1902,29 +2319,29 @@ module.exports = class Meowssion {
                 transition: all 0.15s;
             }
             .msg-tab-btn:hover {
-                color: var(--purrge-text, #dbdee1);
+                color: var(--meowssion-text, #dbdee1);
             }
             .msg-tab-btn.active {
-                color: var(--purrge-text, #ffffff);
-                border-bottom-color: var(--purrge-accent, #6366f1);
+                color: var(--meowssion-text, #ffffff);
+                border-bottom-color: var(--meowssion-accent, #6366f1);
             }
             .msg-tab-count {
                 background-color: rgba(255, 255, 255, 0.08);
-                color: var(--purrge-text-muted, #949ba4);
+                color: var(--meowssion-text-muted, #949ba4);
                 padding: 2px 6px;
                 border-radius: 10px;
                 font-size: 11px;
                 font-weight: 700;
             }
             .msg-tab-btn.active .msg-tab-count {
-                background-color: var(--purrge-accent, #6366f1);
+                background-color: var(--meowssion-accent, #6366f1);
                 color: #ffffff;
             }
 
             .msg-modal-body {
                 flex: 1;
                 overflow-y: auto;
-                background-color: var(--purrge-bg-primary, #0b0c0e);
+                background-color: var(--meowssion-bg-primary, #0b0c0e);
                 transition: background-color 0.2s ease;
             }
 
@@ -2057,9 +2474,9 @@ module.exports = class Meowssion {
             }
 
             .mp-subtab-pill {
-                background: var(--purrge-bg-secondary, #121417);
-                color: var(--purrge-text-muted, #949ba4);
-                border: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.08));
+                background: var(--meowssion-bg-secondary, #121417);
+                color: var(--meowssion-text-muted, #949ba4);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
                 border-radius: 6px;
                 padding: 6px 14px;
                 font-size: 12.5px;
@@ -2072,13 +2489,13 @@ module.exports = class Meowssion {
             }
 
             .mp-subtab-pill:hover {
-                color: var(--purrge-text, #f2f3f5);
-                background-color: var(--purrge-bg-hover, rgba(255, 255, 255, 0.06));
+                color: var(--meowssion-text, #f2f3f5);
+                background-color: var(--meowssion-bg-hover, rgba(255, 255, 255, 0.06));
             }
 
             .mp-subtab-pill.active {
-                background-color: var(--purrge-accent, #6366f1) !important;
-                border-color: var(--purrge-accent, #6366f1) !important;
+                background-color: var(--meowssion-accent, #6366f1) !important;
+                border-color: var(--meowssion-accent, #6366f1) !important;
                 color: #ffffff !important;
             }
 
@@ -2105,8 +2522,8 @@ module.exports = class Meowssion {
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                background: var(--purrge-bg-secondary, #121417);
-                border: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.08));
+                background: var(--meowssion-bg-secondary, #121417);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
                 border-radius: 8px;
                 padding: 8px 12px;
                 gap: 10px;
@@ -2118,18 +2535,18 @@ module.exports = class Meowssion {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                color: var(--purrge-text, #dbdee1);
+                color: var(--meowssion-text, #dbdee1);
             }
 
             .mp-quests-toolbar-title {
                 font-weight: 700;
                 font-size: 13.5px;
-                color: var(--purrge-text, #f2f3f5);
+                color: var(--meowssion-text, #f2f3f5);
             }
 
             .mp-quests-count-tag {
                 background: rgba(88, 101, 242, 0.15);
-                color: var(--purrge-accent, #5865f2);
+                color: var(--meowssion-accent, #5865f2);
                 border: 1px solid rgba(88, 101, 242, 0.3);
                 font-weight: 600;
                 font-size: 11px;
@@ -2149,7 +2566,7 @@ module.exports = class Meowssion {
                 align-items: center;
                 gap: 7px;
                 background: rgba(255, 255, 255, 0.04);
-                border: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.08));
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
                 padding: 4px 9px;
                 border-radius: 6px;
                 cursor: pointer;
@@ -2160,7 +2577,7 @@ module.exports = class Meowssion {
             .mp-quests-auto-toggle-label {
                 font-size: 11.5px;
                 font-weight: 600;
-                color: var(--purrge-text, #dbdee1);
+                color: var(--meowssion-text, #dbdee1);
                 white-space: nowrap;
             }
 
@@ -2171,8 +2588,8 @@ module.exports = class Meowssion {
             }
 
             .mp-quest-card {
-                background: var(--purrge-bg-card, #16191e);
-                border: 1px solid var(--purrge-border, rgba(255, 255, 255, 0.08));
+                background: var(--meowssion-bg-card, #16191e);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
                 border-radius: 8px;
                 padding: 10px 14px;
                 display: flex;
@@ -2183,12 +2600,12 @@ module.exports = class Meowssion {
             }
 
             .mp-quest-card:hover {
-                border-color: var(--purrge-accent, rgba(88, 101, 242, 0.4));
-                background-color: var(--purrge-bg-hover, rgba(255, 255, 255, 0.04));
+                border-color: var(--meowssion-accent, rgba(88, 101, 242, 0.4));
+                background-color: var(--meowssion-bg-hover, rgba(255, 255, 255, 0.04));
             }
 
             .mp-quest-card.mp-quest-running {
-                border-color: var(--purrge-accent, #5865f2);
+                border-color: var(--meowssion-accent, #5865f2);
                 background-color: rgba(88, 101, 242, 0.04);
             }
 
@@ -2333,6 +2750,501 @@ module.exports = class Meowssion {
                 background: #23a55a;
             }
 
+                        /* --- Orb Summary Badges (Quests Tab) --- */
+            .mp-quests-orb-badges {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                margin-left: 6px;
+            }
+            .mp-orb-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 3px 8px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                line-height: 1.2;
+                user-select: none;
+                cursor: default;
+                transition: all 0.15s ease;
+            }
+            .mp-orb-badge-earned {
+                background: rgba(88, 101, 242, 0.12);
+                border: 1px solid rgba(88, 101, 242, 0.35);
+                color: #8599ff;
+            }
+            .mp-orb-badge-earned:hover {
+                background: rgba(88, 101, 242, 0.2);
+                border-color: rgba(88, 101, 242, 0.55);
+            }
+            .mp-orb-badge-pending {
+                background: rgba(35, 165, 90, 0.12);
+                border: 1px solid rgba(35, 165, 90, 0.35);
+                color: #23a55a;
+            }
+            .mp-orb-badge-pending:hover {
+                background: rgba(35, 165, 90, 0.2);
+                border-color: rgba(35, 165, 90, 0.55);
+            }
+            .mp-orb-sparkle {
+                font-size: 11.5px;
+                line-height: 1;
+            }
+            .mp-orb-val {
+                font-weight: 700;
+            }
+            .mp-orb-lbl {
+                font-size: 10px;
+                opacity: 0.85;
+            }
+
+            /* --- Shop / Nitro Credit Tab --- */
+            .mp-shop-container {
+                scrollbar-width: thin;
+                scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                padding: 16px 20px;
+                height: 100%;
+                box-sizing: border-box;
+                overflow-y: auto;
+            }
+
+            .mp-shop-header-card {
+                background: var(--meowssion-bg-secondary, #121417);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
+                border-radius: 10px;
+                padding: 14px 18px;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .mp-shop-header-info {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .mp-shop-title {
+                font-size: 16px;
+                font-weight: 700;
+                color: var(--meowssion-text, #f2f3f5);
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 0;
+            }
+
+            .mp-shop-title-sparkle {
+                color: #5865f2;
+                font-size: 18px;
+            }
+
+            .mp-shop-subtitle {
+                font-size: 12.5px;
+                color: var(--meowssion-text-muted, #949ba4);
+                margin: 0;
+                line-height: 1.4;
+            }
+
+            .mp-shop-stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+                gap: 10px;
+            }
+
+            .mp-shop-stat-box {
+                background: var(--meowssion-bg-card, #16191e);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.06));
+                border-radius: 8px;
+                padding: 10px 12px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .mp-shop-stat-label {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--meowssion-text-muted, #949ba4);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 6px;
+            }
+
+            .mp-shop-stat-value {
+                font-size: 15px;
+                font-weight: 700;
+                color: var(--meowssion-text, #f2f3f5);
+            }
+
+            .mp-val-highlight {
+                color: #5865f2;
+            }
+
+            .mp-val-green {
+                color: #23a55a;
+            }
+
+            .mp-val-danger {
+                color: #f23f43;
+            }
+
+            .mp-stat-sub {
+                font-size: 11px;
+                font-weight: 500;
+                color: var(--meowssion-text-muted, #949ba4);
+            }
+
+            .mp-shop-sync-pill {
+                font-size: 9.5px;
+                font-weight: 700;
+                padding: 1px 5px;
+                border-radius: 4px;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }
+
+            .mp-sync-manual {
+                background: rgba(240, 178, 50, 0.15);
+                color: #f0b232;
+                border: 1px solid rgba(240, 178, 50, 0.35);
+            }
+
+            .mp-sync-live {
+                background: rgba(35, 165, 90, 0.15);
+                color: #23a55a;
+                border: 1px solid rgba(35, 165, 90, 0.35);
+            }
+
+            .mp-sync-auto {
+                background: rgba(88, 101, 242, 0.15);
+                color: #8599ff;
+                border: 1px solid rgba(88, 101, 242, 0.35);
+            }
+
+            .mp-shop-card {
+                background: var(--meowssion-bg-card, #16191e);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
+                border-radius: 10px;
+                padding: 16px 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 14px;
+                position: relative;
+                box-sizing: border-box;
+            }
+
+            .mp-shop-card-badge-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .mp-shop-exclusive-tag {
+                background: linear-gradient(135deg, rgba(88, 101, 242, 0.25), rgba(244, 127, 255, 0.25));
+                border: 1px solid rgba(244, 127, 255, 0.45);
+                color: #ff9cfb;
+                font-size: 10.5px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                padding: 3px 8px;
+                border-radius: 4px;
+                text-transform: uppercase;
+            }
+
+            .mp-shop-cost-tag {
+                background: rgba(88, 101, 242, 0.15);
+                border: 1px solid rgba(88, 101, 242, 0.35);
+                color: #8599ff;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 3px 8px;
+                border-radius: 4px;
+            }
+
+            .mp-shop-item-row {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+
+            .mp-shop-nitro-icon-wrap {
+                width: 58px;
+                height: 58px;
+                border-radius: 12px;
+                background: linear-gradient(135deg, rgba(88, 101, 242, 0.15), rgba(244, 127, 255, 0.15));
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                box-shadow: 0 4px 16px rgba(88, 101, 242, 0.2);
+            }
+
+            .mp-shop-item-details {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                flex: 1;
+            }
+
+            .mp-shop-item-title {
+                font-size: 16px;
+                font-weight: 700;
+                color: #f2f3f5;
+                margin: 0;
+            }
+
+            .mp-shop-item-desc {
+                font-size: 12.5px;
+                color: var(--meowssion-text-muted, #949ba4);
+                margin: 0;
+                line-height: 1.45;
+            }
+
+            .mp-shop-simulator-wrap {
+                background: rgba(0, 0, 0, 0.2);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.06));
+                border-radius: 8px;
+                padding: 12px 14px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .mp-shop-simulator-top {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .mp-shop-sim-label {
+                font-size: 12.5px;
+                font-weight: 600;
+                color: var(--meowssion-text, #f2f3f5);
+            }
+
+            .mp-shop-qty-control {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .mp-qty-btn {
+                background: var(--meowssion-bg-secondary, #121417);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.1));
+                color: var(--meowssion-text, #f2f3f5);
+                border-radius: 5px;
+                width: 28px;
+                height: 28px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                font-weight: 700;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                user-select: none;
+            }
+
+            .mp-qty-btn:hover:not(:disabled) {
+                background: rgba(255, 255, 255, 0.08);
+                border-color: #5865f2;
+                color: #ffffff;
+            }
+
+            .mp-qty-btn:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+
+            .mp-qty-btn.mp-qty-max {
+                width: auto;
+                padding: 0 10px;
+                font-size: 11px;
+                font-weight: 700;
+                background: rgba(88, 101, 242, 0.15);
+                border-color: rgba(88, 101, 242, 0.35);
+                color: #8599ff;
+            }
+
+            .mp-qty-btn.mp-qty-max:hover {
+                background: #5865f2;
+                color: #ffffff;
+            }
+
+            .mp-qty-input {
+                background: var(--meowssion-bg-secondary, #121417);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.1));
+                color: #ffffff;
+                width: 52px;
+                height: 28px;
+                border-radius: 5px;
+                text-align: center;
+                font-size: 13px;
+                font-weight: 700;
+                outline: none;
+                box-sizing: border-box;
+                -moz-appearance: textfield;
+            }
+
+            .mp-qty-input::-webkit-outer-spin-button,
+            .mp-qty-input::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+
+            .mp-shop-calc-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 8px;
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.05));
+                border-radius: 6px;
+                padding: 8px 12px;
+            }
+
+            .mp-shop-calc-item {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+
+            .mp-calc-label {
+                font-size: 10.5px;
+                color: var(--meowssion-text-muted, #949ba4);
+                font-weight: 500;
+            }
+
+            .mp-calc-val {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--meowssion-text, #f2f3f5);
+            }
+
+            .mp-cost-val {
+                color: #8599ff;
+            }
+
+            .mp-shop-warning-box {
+                background: rgba(240, 178, 50, 0.1);
+                border: 1px solid rgba(240, 178, 50, 0.3);
+                border-radius: 6px;
+                padding: 8px 12px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .mp-shop-warning-text {
+                font-size: 11.5px;
+                color: #f0b232;
+                line-height: 1.4;
+            }
+
+            .mp-shop-actions-wrap {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .mp-shop-btn-redeem {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                padding: 10px 18px;
+                font-size: 13.5px;
+            }
+
+            .mp-shop-security-notice {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                font-size: 11.5px;
+                color: var(--meowssion-text-muted, #949ba4);
+                line-height: 1.4;
+                padding: 2px 4px;
+            }
+
+            .mp-shop-sync-card {
+                background: var(--meowssion-bg-secondary, #121417);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
+                border-radius: 10px;
+                padding: 14px 18px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .mp-shop-sync-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+            }
+
+            .mp-shop-sync-title {
+                font-size: 13.5px;
+                font-weight: 700;
+                color: var(--meowssion-text, #f2f3f5);
+                margin: 0;
+            }
+
+            .mp-shop-sync-desc {
+                font-size: 12px;
+                color: var(--meowssion-text-muted, #949ba4);
+                margin: 2px 0 0 0;
+                line-height: 1.4;
+            }
+
+            .mp-shop-sync-controls {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .mp-shop-sync-input-group {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                background: var(--meowssion-bg-card, #16191e);
+                border: 1px solid var(--meowssion-border, rgba(255, 255, 255, 0.08));
+                border-radius: 6px;
+                padding: 3px 6px;
+            }
+
+            .mp-sync-input-prefix {
+                color: #5865f2;
+                font-size: 13px;
+                padding-left: 4px;
+            }
+
+            .mp-sync-input {
+                background: transparent;
+                border: none;
+                outline: none;
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 600;
+                width: 90px;
+            }
+
+            .mp-shop-btn-deduct {
+                font-size: 12px;
+                padding: 6px 12px;
+            }
+
             @keyframes msgFadeIn { from { opacity: 0; } to { opacity: 1; } }
         `;
         BdApi.DOM.addStyle(this.pluginName, css);
@@ -2401,7 +3313,52 @@ module.exports = class Meowssion {
             "time.expired": "Expirada",
             "quests.toast_error": "Erro na execução das missões: {error}",
             "quests.progress_init": "Missão {current}/{total}: Inicializando {name}...",
-            "quests.progress_enrolling": "Aceitando missão \"{name}\" automaticamente..."
+            "quests.progress_enrolling": "Aceitando missão \"{name}\" automaticamente...",
+            "tabs.orbs_shop": "Crédito Nitro • Orbs",
+            "orbs.earned_badge": "✦ {count} Orbs Conquistados",
+            "orbs.pending_badge": "✦ +{count} Orbs Disponíveis",
+            "orbs.earned_label": "Conquistados",
+            "orbs.pending_label": "Disponíveis",
+            "orbs.earned_tooltip": "Total de Orbs acumulados em missões concluídas",
+            "orbs.pending_tooltip": "Total de Orbs disponíveis para conquistar em missões ativas",
+            "shop.title": "Loja de Orbs • Crédito Nitro",
+            "shop.subtitle": "Troque seus Orbs conquistados em missões por Crédito Nitro oficial do Discord com proteção anti-ban.",
+            "shop.stat_current_balance": "Saldo Atual de Orbs",
+            "shop.stat_earned_total": "Orbs Conquistados",
+            "shop.stat_pending_total": "Orbs Pendentes",
+            "shop.stat_max_redeemable": "Crédito Resgatável",
+            "shop.balance_manual_tag": "Manual",
+            "shop.balance_manual_tooltip": "Saldo ajustado manualmente pelo usuário",
+            "shop.balance_live_tag": "Sincronizado",
+            "shop.balance_live_tooltip": "Saldo lido diretamente da carteira do Discord",
+            "shop.balance_calc_tag": "Calculado",
+            "shop.balance_calc_tooltip": "Saldo calculado a partir de missões concluídas",
+            "shop.exclusive_tag": "EXCLUSIVO PARA ORBS",
+            "shop.days": "dias de",
+            "shop.nitro_card_title": "Crédito Nitro (3 Dias)",
+            "shop.nitro_card_desc": "Adiciona 3 dias de assinatura Nitro ao saldo de crédito da sua conta Discord. Pode ser acumulado resgatando múltiplas vezes para estender sua assinatura.",
+            "shop.qty_selector_label": "Quantidade de resgates para simular:",
+            "shop.max_tooltip": "Definir quantidade máxima com base no saldo atual",
+            "shop.calc_selected": "Quantidade Selecionada:",
+            "shop.nitro_days_added": "+{days} dias de Nitro",
+            "shop.total_cost": "Custo Total:",
+            "shop.remaining_orbs": "Orbs Restantes após resgate:",
+            "shop.insufficient_label": "Saldo Insuficiente",
+            "shop.missing_orbs_help": "Faltam {missing} Orbs para resgatar este crédito. Suas missões pendentes oferecem +{pending} Orbs ({count} missões disponíveis) para cobrir essa quantia!",
+            "shop.btn_open_discord_shop": "Abrir Loja de Orbs no Discord para Resgatar ({qty}x)",
+            "shop.toast_manual_guide": "Resgate {qty}x Crédito Nitro de 3 dias manualmente na loja para evitar bloqueio de captcha.",
+            "shop.security_notice": "Proteção Anti-Ban Ativa: O Discord exige validação humana (hCaptcha) para resgates de crédito na loja. Abrir a loja oficial garante 100% de segurança contra restrições de conta.",
+            "shop.sync_balance_title": "Sincronizar Meu Saldo de Orbs",
+            "shop.sync_balance_desc": "Ajuste manualmente caso já tenha gastado Orbs na loja oficial do Discord ou queira alinhar com seu extrato real.",
+            "shop.sync_balance_placeholder": "Digite seu saldo atual de Orbs...",
+            "shop.btn_save_balance": "Salvar Saldo",
+            "shop.btn_reset_balance": "Redefinir (Automático)",
+            "shop.btn_reset_balance_tooltip": "Restaura o cálculo automático a partir das missões concluídas",
+            "shop.btn_register_redeem": "Registrar Resgate (-{cost} Orbs)",
+            "shop.toast_balance_saved": "Saldo de Orbs atualizado para {balance} Orbs!",
+            "shop.toast_balance_reset": "Saldo de Orbs redefinido para detecção automática ({balance} Orbs)!",
+            "shop.toast_redeem_registered": "Resgate de {qty}x Crédito Nitro registrado! -{cost} Orbs (Novo saldo: {balance} Orbs).",
+            "shop.toast_insufficient_orbs": "Saldo insuficiente para registrar este resgate."
         },
         en: {
             "tabs.quests": "Quests",
@@ -2461,7 +3418,52 @@ module.exports = class Meowssion {
             "time.expired": "Expired",
             "quests.toast_error": "Error executing quests: {error}",
             "quests.progress_init": "Quest {current}/{total}: Initializing {name}...",
-            "quests.progress_enrolling": "Auto-enrolling quest \"{name}\"..."
+            "quests.progress_enrolling": "Auto-enrolling quest \"{name}\"...",
+            "tabs.orbs_shop": "Nitro Credit • Orbs",
+            "orbs.earned_badge": "✦ {count} Orbs Earned",
+            "orbs.pending_badge": "✦ +{count} Orbs Available",
+            "orbs.earned_label": "Earned",
+            "orbs.pending_label": "Available",
+            "orbs.earned_tooltip": "Total Orbs accumulated from completed quests",
+            "orbs.pending_tooltip": "Total Orbs available to earn from active quests",
+            "shop.title": "Orbs Shop • Nitro Credit",
+            "shop.subtitle": "Exchange your quest-earned Orbs for official Discord Nitro Credit with anti-ban protection.",
+            "shop.stat_current_balance": "Current Orb Balance",
+            "shop.stat_earned_total": "Earned Orbs",
+            "shop.stat_pending_total": "Pending Orbs",
+            "shop.stat_max_redeemable": "Redeemable Credit",
+            "shop.balance_manual_tag": "Manual",
+            "shop.balance_manual_tooltip": "Balance manually adjusted by user",
+            "shop.balance_live_tag": "Synced",
+            "shop.balance_live_tooltip": "Balance retrieved directly from Discord wallet",
+            "shop.balance_calc_tag": "Calculated",
+            "shop.balance_calc_tooltip": "Balance calculated from completed quests",
+            "shop.exclusive_tag": "EXCLUSIVE FOR ORBS",
+            "shop.days": "days of",
+            "shop.nitro_card_title": "Nitro Credit (3 Days)",
+            "shop.nitro_card_desc": "Adds 3 days of Nitro subscription to your Discord account credit balance. Can be stacked by redeeming multiple times to extend your subscription.",
+            "shop.qty_selector_label": "Redemption quantity to simulate:",
+            "shop.max_tooltip": "Set maximum quantity based on current balance",
+            "shop.calc_selected": "Selected Quantity:",
+            "shop.nitro_days_added": "+{days} days of Nitro",
+            "shop.total_cost": "Total Cost:",
+            "shop.remaining_orbs": "Remaining Orbs after redemption:",
+            "shop.insufficient_label": "Insufficient Balance",
+            "shop.missing_orbs_help": "You need {missing} more Orbs to redeem this credit. Your pending quests offer +{pending} Orbs ({count} quests available) to cover this amount!",
+            "shop.btn_open_discord_shop": "Open Discord Orbs Shop to Redeem ({qty}x)",
+            "shop.toast_manual_guide": "Redeem {qty}x 3-Day Nitro Credit manually in the shop to avoid captcha blocks.",
+            "shop.security_notice": "Anti-Ban Protection Active: Discord requires human challenge validation (hCaptcha) for shop credit redemptions. Opening the official shop ensures 100% safety against account flags.",
+            "shop.sync_balance_title": "Sync My Orb Balance",
+            "shop.sync_balance_desc": "Adjust manually if you already spent Orbs in the official Discord shop or wish to match your real wallet statement.",
+            "shop.sync_balance_placeholder": "Enter your current Orb balance...",
+            "shop.btn_save_balance": "Save Balance",
+            "shop.btn_reset_balance": "Reset (Automatic)",
+            "shop.btn_reset_balance_tooltip": "Restores automatic calculation from completed quests",
+            "shop.btn_register_redeem": "Register Redemption (-{cost} Orbs)",
+            "shop.toast_balance_saved": "Orb balance updated to {balance} Orbs!",
+            "shop.toast_balance_reset": "Orb balance reset to automatic detection ({balance} Orbs)!",
+            "shop.toast_redeem_registered": "{qty}x Nitro Credit redemption registered! -{cost} Orbs (New balance: {balance} Orbs).",
+            "shop.toast_insufficient_orbs": "Insufficient balance to register this redemption."
         }
     };
 };
